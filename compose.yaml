@@ -1,0 +1,37 @@
+services:
+  db:
+    image: docker.io/library/postgres:16-alpine
+    environment:
+      POSTGRES_USER: habitat
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+      POSTGRES_DB: habitat
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    secrets:
+      - pg_password
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U habitat -d habitat"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: db
+      DB_USER: habitat
+      DB_NAME: habitat
+      DB_PORT: "5432"
+      DB_PASSWORD_FILE: /run/secrets/pg_password
+    secrets:
+      - pg_password
+    depends_on:
+      db:
+        condition: service_healthy  # <-- Ждем, пока БД не станет здоровой
+
+secrets:
+  pg_password:
+    external: true
