@@ -129,6 +129,8 @@ func setupTestDB(t *testing.T) {
 
 	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPassword, dbHost, dbPort, dbName)
 
+	runMigrations(dsn)
+
 	var err error
 	dbPool, err = pgxpool.New(context.Background(), dsn)
 	if err != nil {
