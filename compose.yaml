@@ -10,6 +10,8 @@ services:
       - pg_password
     ports:
       - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U habitat -d habitat"]
       interval: 3s
@@ -31,6 +33,9 @@ services:
     depends_on:
       db:
         condition: service_healthy  # <-- Ждем, пока БД не станет здоровой
+
+volumes:
+  postgres_data:
 
 secrets:
   pg_password:
