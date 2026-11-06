@@ -8,9 +8,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
+
+	"habitat/internal/config"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -20,25 +21,9 @@ import (
 
 var dbPool *pgxpool.Pool
 
-func readSecret(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(data)), nil
-}
-
-func getEnv(key, defaultValue string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
-	}
-	return defaultValue
-}
-
 func dbStatusHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-
 	if err := dbPool.Ping(ctx); err != nil {
 		http.Error(w, "Database connection failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -59,7 +44,6 @@ func getHabitatsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-
 	var habitats []Habitat
 	for rows.Next() {
 		var h Habitat
@@ -69,7 +53,6 @@ func getHabitatsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		habitats = append(habitats, h)
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(habitats)
 }
@@ -79,34 +62,22 @@ func runMigrations(dsn string) {
 	if err != nil {
 		log.Fatalf("Failed to initialize migrate: %v", err)
 	}
-
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
-
 	log.Println("Миграции успешно применены!")
 }
 
 func main() {
-	dbHost := getEnv("DB_HOST", "localhost")
-	dbUser := getEnv("DB_USER", "habitat")
-	dbName := getEnv("DB_NAME", "habitat")
-	dbPort := getEnv("DB_PORT", "5432")
-
-	dbPassword := getEnv("DB_PASSWORD", "")
-	if secretPath := getEnv("DB_PASSWORD_FILE", ""); secretPath != "" {
-		if pwd, err := readSecret(secretPath); err == nil {
-			dbPassword = pwd
-		} else {
-			log.Printf("Warning: could not read secret file: %v", err)
-		}
+	// Загружаем конфиг
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
 	}
-
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPassword, dbHost, dbPort, dbName)
+	dsn := cfg.DSN()
 
 	runMigrations(dsn)
 
-	var err error
 	dbPool, err = pgxpool.New(context.Background(), dsn)
 	if err != nil {
 		log.Fatalf("Unable to create connection pool: %v", err)
@@ -147,7 +118,6 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("Server shutdown failed: %v", err)
 	}
