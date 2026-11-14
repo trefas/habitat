@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"habitat/internal/config"
+	"habitat/internal/habitat"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -31,12 +32,6 @@ func dbStatusHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, "Database connection is successful!")
 }
 
-type Habitat struct {
-	ID        int       `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
 func getHabitatsHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := dbPool.Query(context.Background(), "SELECT id, name, created_at FROM habitats ORDER BY id")
 	if err != nil {
@@ -44,9 +39,9 @@ func getHabitatsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	var habitats []Habitat
+	var habitats []habitat.Habitat
 	for rows.Next() {
-		var h Habitat
+		var h habitat.Habitat
 		if err := rows.Scan(&h.ID, &h.Name, &h.CreatedAt); err != nil {
 			http.Error(w, "Failed to scan row: "+err.Error(), http.StatusInternalServerError)
 			return

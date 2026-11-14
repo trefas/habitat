@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"habitat/internal/config"
+	"habitat/internal/habitat"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -120,7 +121,7 @@ func TestGetHabitatsHandler(t *testing.T) {
 	}
 
 	// Проверяем, что ответ - валидный JSON
-	var habitats []Habitat
+	var habitats []habitat.Habitat
 	err = json.Unmarshal(rec.Body.Bytes(), &habitats)
 	if err != nil {
 		t.Errorf("Failed to parse JSON response: %v", err)
