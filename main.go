@@ -13,6 +13,7 @@ import (
 
 	"habitat/internal/config"
 	"habitat/internal/habitat"
+	"habitat/internal/storage/postgres"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -20,36 +21,28 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var dbPool *pgxpool.Pool
-
-func dbStatusHandler(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := dbPool.Ping(ctx); err != nil {
-		http.Error(w, "Database connection failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	fmt.Fprint(w, "Database connection is successful!")
-}
-
-func getHabitatsHandler(w http.ResponseWriter, r *http.Request) {
-	rows, err := dbPool.Query(context.Background(), "SELECT id, name, created_at FROM habitats ORDER BY id")
-	if err != nil {
-		http.Error(w, "Failed to query database: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-	var habitats []habitat.Habitat
-	for rows.Next() {
-		var h habitat.Habitat
-		if err := rows.Scan(&h.ID, &h.Name, &h.CreatedAt); err != nil {
-			http.Error(w, "Failed to scan row: "+err.Error(), http.StatusInternalServerError)
+func dbStatusHandler(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := pool.Ping(ctx); err != nil {
+			http.Error(w, "Database connection failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		habitats = append(habitats, h)
+		fmt.Fprint(w, "Database connection is successful!")
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(habitats)
+}
+
+func getHabitatsHandler(store habitat.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		habitats, err := store.List(r.Context())
+		if err != nil {
+			http.Error(w, "Failed to query database: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(habitats)
+	}
 }
 
 func runMigrations(dsn string) {
@@ -64,7 +57,6 @@ func runMigrations(dsn string) {
 }
 
 func main() {
-	// Загружаем конфиг
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -73,23 +65,26 @@ func main() {
 
 	runMigrations(dsn)
 
-	dbPool, err = pgxpool.New(context.Background(), dsn)
+	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
 		log.Fatalf("Unable to create connection pool: %v", err)
 	}
-	defer dbPool.Close()
+	defer pool.Close()
 
-	if err := dbPool.Ping(context.Background()); err != nil {
+	if err := pool.Ping(context.Background()); err != nil {
 		log.Fatalf("Unable to ping database: %v", err)
 	}
 	log.Println("Успешно подключено к базе данных!")
+
+	// Создаём Store
+	store := postgres.New(pool)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "Hello from Habitat API!")
 	})
-	mux.HandleFunc("/status", dbStatusHandler)
-	mux.HandleFunc("/habitats", getHabitatsHandler)
+	mux.HandleFunc("/status", dbStatusHandler(pool))
+	mux.HandleFunc("/habitats", getHabitatsHandler(store))
 
 	srv := &http.Server{
 		Addr:         ":8080",

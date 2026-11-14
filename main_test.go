@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"habitat/internal/config"
 	"habitat/internal/habitat"
+	"habitat/internal/storage/postgres"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -35,60 +37,52 @@ func TestRootHandler(t *testing.T) {
 	}
 }
 
-// setupTestDB инициализирует подключение к базе данных для тестов
-// Если БД недоступна — тест пропускается (для CI/CD)
-func setupTestDB(t *testing.T) {
+// setupTestDB инициализирует подключение к базе данных для тестов.
+// Если БД недоступна — тест пропускается (для CI/CD).
+// Возвращает pool, который нужно закрыть через defer pool.Close().
+func setupTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
-	// Загружаем конфиг
 	cfg, err := config.Load()
 	if err != nil {
 		t.Skipf("Skipping test: failed to load config: %v", err)
 	}
 	dsn := cfg.DSN()
 
-	// Пробуем подключиться
-	ctx, cancel := context.WithTimeout(context.Background(), 2*1e9) // 2 секунды
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	dbPool, err = pgxpool.New(ctx, dsn)
+	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Skipf("Skipping test: database not available: %v", err)
 	}
 
-	// Проверяем, что БД действительно отвечает
-	if err := dbPool.Ping(ctx); err != nil {
-		dbPool.Close()
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
 		t.Skipf("Skipping test: database ping failed: %v", err)
 	}
 
-	// Запускаем миграции
 	runMigrations(dsn)
 
-	// Очищаем таблицу перед тестами
-	_, err = dbPool.Exec(context.Background(), "DELETE FROM habitats")
+	_, err = pool.Exec(context.Background(), "DELETE FROM habitats")
 	if err != nil {
-		dbPool.Close()
+		pool.Close()
 		t.Fatalf("Unable to clear test data: %v", err)
 	}
-}
 
-// teardownTestDB закрывает подключение к базе данных
-func teardownTestDB() {
-	if dbPool != nil {
-		dbPool.Close()
-	}
+	return pool
 }
 
 // TestStatusHandler проверяет эндпоинт /status
 func TestStatusHandler(t *testing.T) {
-	setupTestDB(t)
-	defer teardownTestDB()
+	pool := setupTestDB(t)
+	defer pool.Close()
 
 	req := httptest.NewRequest(http.MethodGet, "/status", nil)
 	rec := httptest.NewRecorder()
 
-	dbStatusHandler(rec, req)
+	handler := dbStatusHandler(pool)
+	handler(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, rec.Code)
@@ -102,11 +96,10 @@ func TestStatusHandler(t *testing.T) {
 
 // TestGetHabitatsHandler проверяет эндпоинт /habitats
 func TestGetHabitatsHandler(t *testing.T) {
-	setupTestDB(t)
-	defer teardownTestDB()
+	pool := setupTestDB(t)
+	defer pool.Close()
 
-	// Вставляем тестовую запись
-	_, err := dbPool.Exec(context.Background(), "INSERT INTO habitats (name) VALUES ($1)", "Тестовый биом")
+	_, err := pool.Exec(context.Background(), "INSERT INTO habitats (name) VALUES ($1)", "Тестовый биом")
 	if err != nil {
 		t.Fatalf("Failed to insert test data: %v", err)
 	}
@@ -114,13 +107,14 @@ func TestGetHabitatsHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/habitats", nil)
 	rec := httptest.NewRecorder()
 
-	getHabitatsHandler(rec, req)
+	store := postgres.New(pool)
+	handler := getHabitatsHandler(store)
+	handler(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, rec.Code)
 	}
 
-	// Проверяем, что ответ - валидный JSON
 	var habitats []habitat.Habitat
 	err = json.Unmarshal(rec.Body.Bytes(), &habitats)
 	if err != nil {
