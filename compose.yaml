@@ -32,7 +32,7 @@ services:
       - pg_password
     depends_on:
       db:
-        condition: service_healthy  # <-- Ждем, пока БД не станет здоровой
+        condition: service_healthy
 
 volumes:
   postgres_data:
