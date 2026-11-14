@@ -1,10 +1,8 @@
-package main
+package httpapi
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,35 +10,16 @@ import (
 
 	"habitat/internal/config"
 	"habitat/internal/habitat"
-	"habitat/internal/httpapi"
 	"habitat/internal/storage/postgres"
 
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// TestRootHandler проверяет корневой эндпоинт "/"
-func TestRootHandler(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-
-	handler := func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "Hello from Habitat API!")
-	}
-	handler(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("Expected status %d, got %d", http.StatusOK, rec.Code)
-	}
-
-	expected := "Hello from Habitat API!"
-	if rec.Body.String() != expected {
-		t.Errorf("Expected body '%s', got '%s'", expected, rec.Body.String())
-	}
-}
-
 // setupTestDB инициализирует подключение к базе данных для тестов.
 // Если БД недоступна — тест пропускается (для CI/CD).
-// Возвращает pool, который нужно закрыть через defer pool.Close().
 func setupTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
@@ -63,8 +42,18 @@ func setupTestDB(t *testing.T) *pgxpool.Pool {
 		t.Skipf("Skipping test: database ping failed: %v", err)
 	}
 
-	runMigrations(dsn)
+	// Применяем миграции
+	m, err := migrate.New("file://../../migrations", dsn)
+	if err != nil {
+		pool.Close()
+		t.Skipf("Skipping test: failed to initialize migrate: %v", err)
+	}
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		pool.Close()
+		t.Skipf("Skipping test: failed to run migrations: %v", err)
+	}
 
+	// Очищаем таблицу перед тестами
 	_, err = pool.Exec(context.Background(), "DELETE FROM habitats")
 	if err != nil {
 		pool.Close()
@@ -74,15 +63,15 @@ func setupTestDB(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// TestStatusHandler проверяет эндпоинт /status
-func TestStatusHandler(t *testing.T) {
+// TestDBStatusHandler проверяет эндпоинт /status
+func TestDBStatusHandler(t *testing.T) {
 	pool := setupTestDB(t)
 	defer pool.Close()
 
 	req := httptest.NewRequest(http.MethodGet, "/status", nil)
 	rec := httptest.NewRecorder()
 
-	handler := httpapi.DBStatusHandler(pool)
+	handler := DBStatusHandler(pool)
 	handler(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -109,7 +98,7 @@ func TestGetHabitatsHandler(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	store := postgres.New(pool)
-	handler := httpapi.GetHabitatsHandler(store)
+	handler := GetHabitatsHandler(store)
 	handler(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -128,36 +117,5 @@ func TestGetHabitatsHandler(t *testing.T) {
 
 	if habitats[0].Name != "Тестовый биом" {
 		t.Errorf("Expected name 'Тестовый биом', got '%s'", habitats[0].Name)
-	}
-}
-
-// TestRootEndpoint тестирует корневой обработчик через httptest
-func TestRootEndpoint(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "Hello from Habitat API!")
-	})
-
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/")
-	if err != nil {
-		t.Fatalf("Failed to make request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected status %d, got %d", http.StatusOK, resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("Failed to read response body: %v", err)
-	}
-
-	expected := "Hello from Habitat API!"
-	if string(body) != expected {
-		t.Errorf("Expected body '%s', got '%s'", expected, string(body))
 	}
 }

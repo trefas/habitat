@@ -32,7 +32,6 @@ func runMigrations(dsn string) {
 }
 
 func main() {
-
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -60,7 +59,6 @@ func main() {
 	})
 	mux.HandleFunc("/status", httpapi.DBStatusHandler(pool))
 	mux.HandleFunc("/habitats", httpapi.GetHabitatsHandler(store))
-	// Создаём Store
 
 	srv := &http.Server{
 		Addr:         ":8080",

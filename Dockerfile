@@ -2,7 +2,7 @@
 FROM golang:1.27 AS builder
 WORKDIR /app
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o habitat main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o habitat ./cmd/api
 
 # Этап 2: Финальный минимальный образ
 FROM alpine:latest
