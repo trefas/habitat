@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,7 +11,7 @@ import (
 	"time"
 
 	"habitat/internal/config"
-	"habitat/internal/habitat"
+	"habitat/internal/httpapi"
 	"habitat/internal/storage/postgres"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -20,30 +19,6 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-func dbStatusHandler(pool *pgxpool.Pool) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if err := pool.Ping(ctx); err != nil {
-			http.Error(w, "Database connection failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		fmt.Fprint(w, "Database connection is successful!")
-	}
-}
-
-func getHabitatsHandler(store habitat.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		habitats, err := store.List(r.Context())
-		if err != nil {
-			http.Error(w, "Failed to query database: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(habitats)
-	}
-}
 
 func runMigrations(dsn string) {
 	m, err := migrate.New("file://migrations", dsn)
@@ -57,6 +32,7 @@ func runMigrations(dsn string) {
 }
 
 func main() {
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -76,15 +52,15 @@ func main() {
 	}
 	log.Println("Успешно подключено к базе данных!")
 
-	// Создаём Store
 	store := postgres.New(pool)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "Hello from Habitat API!")
 	})
-	mux.HandleFunc("/status", dbStatusHandler(pool))
-	mux.HandleFunc("/habitats", getHabitatsHandler(store))
+	mux.HandleFunc("/status", httpapi.DBStatusHandler(pool))
+	mux.HandleFunc("/habitats", httpapi.GetHabitatsHandler(store))
+	// Создаём Store
 
 	srv := &http.Server{
 		Addr:         ":8080",

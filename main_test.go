@@ -12,6 +12,7 @@ import (
 
 	"habitat/internal/config"
 	"habitat/internal/habitat"
+	"habitat/internal/httpapi"
 	"habitat/internal/storage/postgres"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -81,7 +82,7 @@ func TestStatusHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/status", nil)
 	rec := httptest.NewRecorder()
 
-	handler := dbStatusHandler(pool)
+	handler := httpapi.DBStatusHandler(pool)
 	handler(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -108,7 +109,7 @@ func TestGetHabitatsHandler(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	store := postgres.New(pool)
-	handler := getHabitatsHandler(store)
+	handler := httpapi.GetHabitatsHandler(store)
 	handler(rec, req)
 
 	if rec.Code != http.StatusOK {
