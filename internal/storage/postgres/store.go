@@ -4,12 +4,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Store реализует habitat.Store для PostgreSQL
-type Store struct {
+// Storage представляет хранилище данных в PostgreSQL
+type Storage struct {
 	pool *pgxpool.Pool
 }
 
-// New создаёт новый Store
-func New(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+// New создает новый экземпляр Storage
+func New(pool *pgxpool.Pool) *Storage {
+	return &Storage{pool: pool}
 }

@@ -56,13 +56,28 @@ func main() {
 	}
 	log.Println("Успешно подключено к базе данных!")
 
-	_ = postgres.New(pool) // Пока просто инициализируем, чтобы убедиться, что компилируется
+	// Инициализируем хранилище (пока пустое, но готовое к расширению)
+	_ = postgres.New(pool)
 
 	mux := http.NewServeMux()
+
+	// Liveness probe: приложение просто живо
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok")
 	})
+
+	// Readiness probe: приложение живо И база данных доступна
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := pool.Ping(ctx); err != nil {
+			http.Error(w, "db unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		fmt.Fprint(w, "ready")
+	})
+
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "Hello from Habitat API!")
 	})
