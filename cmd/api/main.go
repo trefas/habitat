@@ -10,7 +10,9 @@ import (
 	"syscall"
 	"time"
 
+	"habitat/internal/auth"
 	"habitat/internal/config"
+	"habitat/internal/httpapi"
 	"habitat/internal/storage/postgres"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -56,18 +58,20 @@ func main() {
 	}
 	log.Println("Успешно подключено к базе данных!")
 
-	// Инициализируем хранилище (пока пустое, но готовое к расширению)
-	_ = postgres.New(pool)
+	store := postgres.New(pool)
+
+	// Инициализируем сервис аутентификации
+	tm := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL)
+	hasher := auth.BcryptHasher{Cost: cfg.BcryptCost}
+	authSvc := auth.NewService(store, hasher, tm, cfg.RefreshTokenTTL)
 
 	mux := http.NewServeMux()
 
-	// Liveness probe: приложение просто живо
+	// Healthchecks
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok")
 	})
-
-	// Readiness probe: приложение живо И база данных доступна
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
@@ -77,6 +81,10 @@ func main() {
 		}
 		fmt.Fprint(w, "ready")
 	})
+
+	// API Routes
+	mux.HandleFunc("POST /api/v1/auth/register", httpapi.RegisterHandler(authSvc))
+	mux.HandleFunc("POST /api/v1/auth/login", httpapi.LoginHandler(authSvc))
 
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "Hello from Habitat API!")
