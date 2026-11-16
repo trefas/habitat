@@ -3,12 +3,11 @@ name: CD
 on:
   push:
     branches: [ main, master ]
-    tags: [ 'v*.*.*' ]
+    tags: [ 'v*' ]
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    
     permissions:
       contents: read
       packages: write

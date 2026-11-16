@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"habitat/internal/auth"
 	"habitat/internal/config"
 	"habitat/internal/httpapi"
 	"habitat/internal/storage/postgres"
@@ -20,11 +21,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func runMigrations(dsn string) {
-	m, err := migrate.New("file:///app/migrations", dsn)
+func runMigrations(dsn, path string) {
+	m, err := migrate.New(path, dsn)
 	if err != nil {
 		log.Fatalf("Failed to initialize migrate: %v", err)
 	}
+	defer func() {
+		if srcErr, dbErr := m.Close(); srcErr != nil || dbErr != nil {
+			log.Printf("warn: close migrate: src=%v db=%v", srcErr, dbErr)
+		}
+	}()
+
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
@@ -36,9 +43,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-	dsn := cfg.DSN()
 
-	runMigrations(dsn)
+	dsn := cfg.DSN()
+	runMigrations(dsn, cfg.MigrationsPath)
 
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -53,15 +60,54 @@ func main() {
 
 	store := postgres.New(pool)
 
+	// Инициализируем сервис аутентификации
+	tm := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL)
+	hasher := auth.BcryptHasher{Cost: cfg.BcryptCost}
+	authSvc := auth.NewService(store, hasher, tm, cfg.RefreshTokenTTL)
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+
+	// 1. Healthchecks
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "ok")
+	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := pool.Ping(ctx); err != nil {
+			http.Error(w, "db unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		fmt.Fprint(w, "ready")
+	})
+
+	// 2. Публичные маршруты аутентификации (ОБРАТИТЕ ВНИМАНИЕ на пробел между методом и путём!)
+	mux.HandleFunc("POST /api/v1/auth/register", httpapi.RegisterHandler(authSvc))
+	mux.HandleFunc("POST /api/v1/auth/login", httpapi.LoginHandler(authSvc))
+	mux.HandleFunc("POST /api/v1/auth/refresh", httpapi.RefreshHandler(authSvc))
+	mux.HandleFunc("POST /api/v1/auth/logout", httpapi.LogoutHandler(authSvc))
+
+	// 3. Защищённые маршруты
+	authMW := httpapi.RequireAuth(tm)
+
+	mux.Handle("GET /api/v1/me", authMW(httpapi.MeHandler(store)))
+	mux.Handle("PATCH /api/v1/me/password", authMW(httpapi.ChangePasswordHandler(authSvc))) // <-- ДОБАВИТЬ
+
+	// Пример admin-only маршрута
+	mux.Handle("GET /api/v1/admin/users", authMW(httpapi.RequireRole("admin")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"message":"Admin area"}`)
+	}))))
+
+	// 4. Catch-all для корня (строго "GET /", чтобы не перехватывать /api/v1/... в Go 1.22+)
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "Hello from Habitat API!")
 	})
-	mux.HandleFunc("/status", httpapi.DBStatusHandler(pool))
-	mux.HandleFunc("/habitats", httpapi.GetHabitatsHandler(store))
 
 	srv := &http.Server{
-		Addr:         ":8080",
+		Addr:         cfg.HTTPAddr,
 		Handler:      mux,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
@@ -69,7 +115,7 @@ func main() {
 	}
 
 	go func() {
-		log.Println("Сервер запущен на порту 8080...")
+		log.Printf("Сервер запущен на порту %s...", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP server error: %v", err)
 		}
@@ -82,6 +128,7 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("Server shutdown failed: %v", err)
 	}
