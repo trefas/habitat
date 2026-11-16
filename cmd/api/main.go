@@ -21,7 +21,7 @@ import (
 )
 
 func runMigrations(dsn string) {
-	m, err := migrate.New("file://migrations", dsn)
+	m, err := migrate.New("file:///app/migrations", dsn)
 	if err != nil {
 		log.Fatalf("Failed to initialize migrate: %v", err)
 	}
