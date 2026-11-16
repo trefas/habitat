@@ -16,8 +16,8 @@ func TestParseAccess_RejectsAlgNone(t *testing.T) {
 
 	enc := base64.RawURLEncoding.EncodeToString
 	header := enc([]byte(`{"alg":"none","typ":"JWT"}`))
-	payload := enc([]byte(fmt.Sprintf(`{"sub":"123","role":"admin","iss":"habitat-api","exp":%d}`,
-		time.Now().Add(time.Hour).Unix())))
+	payload := enc(fmt.Appendf(nil, `{"sub":"123","role":"admin","iss":"habitat-api","exp":%d}`,
+		time.Now().Add(time.Hour).Unix()))
 
 	fakeToken := header + "." + payload + "."
 

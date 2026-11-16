@@ -36,6 +36,7 @@ var (
 	ErrInvalidRefresh     = errors.New("invalid refresh token")
 	ErrRefreshReused      = errors.New("refresh token reuse detected")
 	ErrUserBlocked        = errors.New("user is not active")
+	ErrRefreshExpired     = errors.New("refresh token expired")
 )
 
 // NormalizeEmail приводит email к нижнему регистру и убирает пробелы по краям.
