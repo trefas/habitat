@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"habitat/internal/config"
-	"habitat/internal/httpapi"
 	"habitat/internal/storage/postgres"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -20,11 +19,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func runMigrations(dsn string) {
-	m, err := migrate.New("file:///app/migrations", dsn)
+func runMigrations(dsn, path string) {
+	m, err := migrate.New(path, dsn)
 	if err != nil {
 		log.Fatalf("Failed to initialize migrate: %v", err)
 	}
+	defer func() {
+		if srcErr, dbErr := m.Close(); srcErr != nil || dbErr != nil {
+			log.Printf("warn: close migrate: src=%v db=%v", srcErr, dbErr)
+		}
+	}()
+
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
@@ -36,9 +41,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-	dsn := cfg.DSN()
 
-	runMigrations(dsn)
+	dsn := cfg.DSN()
+	runMigrations(dsn, cfg.MigrationsPath)
 
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -51,17 +56,19 @@ func main() {
 	}
 	log.Println("Успешно подключено к базе данных!")
 
-	store := postgres.New(pool)
+	_ = postgres.New(pool) // Пока просто инициализируем, чтобы убедиться, что компилируется
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "ok")
+	})
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "Hello from Habitat API!")
 	})
-	mux.HandleFunc("/status", httpapi.DBStatusHandler(pool))
-	mux.HandleFunc("/habitats", httpapi.GetHabitatsHandler(store))
 
 	srv := &http.Server{
-		Addr:         ":8080",
+		Addr:         cfg.HTTPAddr,
 		Handler:      mux,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
@@ -69,7 +76,7 @@ func main() {
 	}
 
 	go func() {
-		log.Println("Сервер запущен на порту 8080...")
+		log.Printf("Сервер запущен на порту %s...", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP server error: %v", err)
 		}
@@ -82,6 +89,7 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("Server shutdown failed: %v", err)
 	}

@@ -1,6 +1,7 @@
 services:
   db:
     image: docker.io/library/postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: habitat
       POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
@@ -9,7 +10,7 @@ services:
     secrets:
       - pg_password
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432" # Ограничиваем доступ только с хоста
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -20,6 +21,7 @@ services:
 
   app:
     build: .
+    restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
@@ -28,15 +30,24 @@ services:
       DB_NAME: habitat
       DB_PORT: "5432"
       DB_PASSWORD_FILE: /run/secrets/pg_password
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      MIGRATIONS_PATH: file:///app/migrations
+      ACCESS_TOKEN_TTL: 15m
+      REFRESH_TOKEN_TTL: 720h
+      BCRYPT_COST: "12"
     secrets:
       - pg_password
+      - jwt_secret
     depends_on:
       db:
         condition: service_healthy
+    stop_grace_period: 35s # Важно для graceful shutdown (30s в коде + запас)
 
 volumes:
   postgres_data:
 
 secrets:
   pg_password:
-    external: true
+    file: ./secrets/pg_password.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
