@@ -16,6 +16,8 @@ type Storage interface {
 	UserByEmail(ctx context.Context, email string) (*domain.User, error)
 	UserByID(ctx context.Context, id string) (*domain.User, error)
 	TouchLastLogin(ctx context.Context, id string) error
+	UpdatePassword(ctx context.Context, id, newHash string) error        // <-- ДОБАВИТЬ
+	RevokeAllUserRefreshTokens(ctx context.Context, userID string) error // <-- ДОБАВИТЬ
 	CreateRefreshToken(ctx context.Context, userID string, hash []byte, exp time.Time, m domain.SessionMeta) error
 	RotateRefreshToken(ctx context.Context, oldHash, newHash []byte, exp time.Time, m domain.SessionMeta) (string, string, error)
 	RevokeFamilyByHash(ctx context.Context, hash []byte) error
@@ -149,4 +151,37 @@ func (s *Service) Refresh(ctx context.Context, rawRefresh string, meta domain.Se
 func (s *Service) Logout(ctx context.Context, rawRefresh string) error {
 	// ВАЖНО: используем auth.HashRefreshToken
 	return s.store.RevokeFamilyByHash(ctx, HashRefreshToken(rawRefresh))
+}
+
+// ChangePassword меняет пароль пользователя и отзывает ВСЕ его сессии.
+func (s *Service) ChangePassword(ctx context.Context, userID, currentPassword, newPassword string) error {
+	// 1. Получаем пользователя, чтобы проверить текущий пароль
+	u, err := s.store.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	// 2. Проверяем текущий пароль
+	if err := s.hasher.Compare(u.PasswordHash, currentPassword); err != nil {
+		return domain.ErrInvalidCredentials
+	}
+
+	// 3. Валидируем новый пароль
+	if n := len(newPassword); n < 8 || n > 72 {
+		return fmt.Errorf("%w: длина пароля должна быть от 8 до 72 байт", domain.ErrValidation)
+	}
+
+	// 4. Хешируем новый пароль
+	newHash, err := s.hasher.Hash(newPassword)
+	if err != nil {
+		return err
+	}
+
+	// 5. Обновляем пароль в БД
+	if err := s.store.UpdatePassword(ctx, userID, newHash); err != nil {
+		return err
+	}
+
+	// 6. КРИТИЧЕСКИ ВАЖНО: Отзываем все активные сессии (refresh-токены)
+	return s.store.RevokeAllUserRefreshTokens(ctx, userID)
 }

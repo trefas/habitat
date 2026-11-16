@@ -92,6 +92,7 @@ func main() {
 	authMW := httpapi.RequireAuth(tm)
 
 	mux.Handle("GET /api/v1/me", authMW(httpapi.MeHandler(store)))
+	mux.Handle("PATCH /api/v1/me/password", authMW(httpapi.ChangePasswordHandler(authSvc))) // <-- ДОБАВИТЬ
 
 	// Пример admin-only маршрута
 	mux.Handle("GET /api/v1/admin/users", authMW(httpapi.RequireRole("admin")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

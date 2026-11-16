@@ -80,3 +80,21 @@ func (s *Storage) TouchLastLogin(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, q, id)
 	return err
 }
+
+// UpdatePassword обновляет хеш пароля пользователя.
+func (s *Storage) UpdatePassword(ctx context.Context, id, newHash string) error {
+	const q = `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1::uuid`
+	_, err := s.pool.Exec(ctx, q, id, newHash)
+	return err
+}
+
+// RevokeAllUserRefreshTokens отзывает все активные refresh-токены пользователя.
+// Вызывается при смене пароля или блокировке аккаунта.
+func (s *Storage) RevokeAllUserRefreshTokens(ctx context.Context, userID string) error {
+	const q = `
+		UPDATE refresh_tokens 
+		SET revoked_at = now() 
+		WHERE user_id = $1::uuid AND revoked_at IS NULL`
+	_, err := s.pool.Exec(ctx, q, userID)
+	return err
+}
