@@ -12,6 +12,8 @@ import (
 type AuthService interface {
 	Register(ctx context.Context, email, password, displayName string) (*domain.User, error)
 	Login(ctx context.Context, email, password string, meta domain.SessionMeta) (*domain.TokenPair, *domain.User, error)
+	Refresh(ctx context.Context, rawRefresh string, meta domain.SessionMeta) (*domain.TokenPair, error)
+	Logout(ctx context.Context, rawRefresh string) error
 }
 
 func RegisterHandler(svc AuthService) http.HandlerFunc {
@@ -75,14 +77,59 @@ func LoginHandler(svc AuthService) http.HandlerFunc {
 	}
 }
 
+func RefreshHandler(svc AuthService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_json", "Некорректный JSON")
+			return
+		}
+
+		meta := extractSessionMeta(r)
+		tp, err := svc.Refresh(r.Context(), req.RefreshToken, meta)
+		if err != nil {
+			mapDomainError(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"access_token":  tp.AccessToken,
+			"refresh_token": tp.RefreshToken,
+			"token_type":    "Bearer",
+			"expires_in":    tp.ExpiresIn,
+		})
+	}
+}
+
+func LogoutHandler(svc AuthService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_json", "Некорректный JSON")
+			return
+		}
+
+		if err := svc.Logout(r.Context(), req.RefreshToken); err != nil {
+			mapDomainError(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent) // 204 No Content
+	}
+}
+
 func extractSessionMeta(r *http.Request) domain.SessionMeta {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		host = r.RemoteAddr // fallback, если порта нет
+		host = r.RemoteAddr
 	}
 	ua := r.UserAgent()
 	if len(ua) > 512 {
-		ua = ua[:512] // ограничиваем длину
+		ua = ua[:512]
 	}
 	return domain.SessionMeta{
 		IP:        host,

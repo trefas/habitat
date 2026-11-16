@@ -14,8 +14,11 @@ import (
 type Storage interface {
 	CreateUser(ctx context.Context, u *domain.User) error
 	UserByEmail(ctx context.Context, email string) (*domain.User, error)
+	UserByID(ctx context.Context, id string) (*domain.User, error)
 	TouchLastLogin(ctx context.Context, id string) error
 	CreateRefreshToken(ctx context.Context, userID string, hash []byte, exp time.Time, m domain.SessionMeta) error
+	RotateRefreshToken(ctx context.Context, oldHash, newHash []byte, exp time.Time, m domain.SessionMeta) (string, string, error)
+	RevokeFamilyByHash(ctx context.Context, hash []byte) error
 }
 
 // Service реализует бизнес-логику аутентификации.
@@ -115,4 +118,35 @@ func (s *Service) Login(ctx context.Context, email, password string, meta domain
 		RefreshToken: rawRefresh,
 		ExpiresIn:    ttl,
 	}, u, nil
+}
+
+// Refresh обновляет пару токенов, используя валидный refresh-токен.
+func (s *Service) Refresh(ctx context.Context, rawRefresh string, meta domain.SessionMeta) (*domain.TokenPair, error) {
+	newRaw, newHash, err := NewRefreshToken()
+	if err != nil {
+		return nil, err
+	}
+
+	// ВАЖНО: используем auth.HashRefreshToken
+	userID, role, err := s.store.RotateRefreshToken(ctx, HashRefreshToken(rawRefresh), newHash, time.Now().Add(s.refreshTTL), meta)
+	if err != nil {
+		return nil, err
+	}
+
+	access, ttl, err := s.tokens.NewAccessToken(userID, role)
+	if err != nil {
+		return nil, err
+	}
+
+	return &domain.TokenPair{
+		AccessToken:  access,
+		RefreshToken: newRaw,
+		ExpiresIn:    ttl,
+	}, nil
+}
+
+// Logout отзывает всю семью refresh-токенов.
+func (s *Service) Logout(ctx context.Context, rawRefresh string) error {
+	// ВАЖНО: используем auth.HashRefreshToken
+	return s.store.RevokeFamilyByHash(ctx, HashRefreshToken(rawRefresh))
 }

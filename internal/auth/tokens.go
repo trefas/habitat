@@ -88,3 +88,9 @@ func NewRefreshToken() (raw string, hash []byte, err error) {
 	sum := sha256.Sum256([]byte(raw))
 	return raw, sum[:], nil
 }
+
+// HashRefreshToken вычисляет SHA-256 хеш от сырого refresh-токена.
+func HashRefreshToken(raw string) []byte {
+	sum := sha256.Sum256([]byte(raw))
+	return sum[:]
+}

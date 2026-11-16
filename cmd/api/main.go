@@ -67,7 +67,7 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// Healthchecks
+	// 1. Healthchecks
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok")
@@ -82,10 +82,25 @@ func main() {
 		fmt.Fprint(w, "ready")
 	})
 
-	// API Routes
+	// 2. Публичные маршруты аутентификации (ОБРАТИТЕ ВНИМАНИЕ на пробел между методом и путём!)
 	mux.HandleFunc("POST /api/v1/auth/register", httpapi.RegisterHandler(authSvc))
 	mux.HandleFunc("POST /api/v1/auth/login", httpapi.LoginHandler(authSvc))
+	mux.HandleFunc("POST /api/v1/auth/refresh", httpapi.RefreshHandler(authSvc))
+	mux.HandleFunc("POST /api/v1/auth/logout", httpapi.LogoutHandler(authSvc))
 
+	// 3. Защищённые маршруты
+	authMW := httpapi.RequireAuth(tm)
+
+	mux.Handle("GET /api/v1/me", authMW(httpapi.MeHandler(store)))
+
+	// Пример admin-only маршрута
+	mux.Handle("GET /api/v1/admin/users", authMW(httpapi.RequireRole("admin")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"message":"Admin area"}`)
+	}))))
+
+	// 4. Catch-all для корня (строго "GET /", чтобы не перехватывать /api/v1/... в Go 1.22+)
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "Hello from Habitat API!")
 	})
