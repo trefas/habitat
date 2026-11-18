@@ -34,6 +34,41 @@ func MeHandler(store UserStorage) http.HandlerFunc {
 	}
 }
 
+type ProfileService interface {
+	UpdateProfile(ctx context.Context, userID string, displayName *string) (*domain.User, error)
+}
+
+// UpdateMeHandler изменяет собственный профиль пользователя.
+// Разрешено менять только display_name.
+func UpdateMeHandler(svc ProfileService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := GetClaims(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "invalid_token", "Токен не найден")
+			return
+		}
+
+		var req struct {
+			DisplayName *string `json:"display_name"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_json", "Некорректный JSON")
+			return
+		}
+
+		u, err := svc.UpdateProfile(r.Context(), claims.Subject, req.DisplayName)
+		if err != nil {
+			mapDomainError(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, newUserDTO(u))
+	}
+}
+
 type PasswordService interface {
 	ChangePassword(ctx context.Context, userID, currentPassword, newPassword string) error
 }

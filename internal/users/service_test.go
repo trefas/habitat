@@ -137,6 +137,23 @@ func TestUpdateUser_AllowsSelfDisplayNameChange(t *testing.T) {
 	require.Equal(t, "New Name", u.DisplayName)
 }
 
+func TestUpdateProfile_ChangesOnlyDisplayName(t *testing.T) {
+	store := newFakeStorage()
+	svc := NewService(store)
+
+	u, err := svc.UpdateProfile(t.Context(), userID, strPtr("  New User  "))
+	require.NoError(t, err)
+	require.Equal(t, "New User", u.DisplayName)
+	require.Equal(t, domain.RoleUser, u.Role)
+	require.Equal(t, domain.StatusActive, u.Status)
+
+	_, err = svc.UpdateProfile(t.Context(), userID, nil)
+	require.ErrorIs(t, err, domain.ErrValidation)
+
+	_, err = svc.UpdateProfile(t.Context(), "not-a-uuid", strPtr("New User"))
+	require.ErrorIs(t, err, domain.ErrValidation)
+}
+
 func TestUpdateUser_RejectsLastAdminDemotion(t *testing.T) {
 	store := newFakeStorage()
 	delete(store.users, otherAdminID)

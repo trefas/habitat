@@ -74,6 +74,17 @@ func (s *Service) GetUser(ctx context.Context, id string) (*domain.User, error) 
 	return s.store.UserByID(ctx, id)
 }
 
+// UpdateProfile изменяет собственный профиль пользователя.
+// Сейчас разрешено менять только display_name: email, роль и статус
+// пользователь изменить не может.
+func (s *Service) UpdateProfile(ctx context.Context, userID string, displayName *string) (*domain.User, error) {
+	if displayName == nil {
+		return nil, fmt.Errorf("%w: не передано поле display_name", domain.ErrValidation)
+	}
+
+	return s.UpdateUser(ctx, userID, userID, domain.UserPatch{DisplayName: displayName})
+}
+
 // UpdateUser изменяет профиль, роль или статус пользователя.
 // actorID — администратор, выполняющий операцию.
 func (s *Service) UpdateUser(ctx context.Context, actorID, targetID string, p domain.UserPatch) (*domain.User, error) {

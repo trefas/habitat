@@ -15,7 +15,7 @@ REST API сервера **Habitat** на Go. Сервис работает с Po
   отозванного токена отзывает всё семейство сессий.
 - Защита от timing-атак при неверном email и пароле.
 - Смена пароля с отзывом всех активных сессий.
-- Профиль текущего пользователя (`/me`).
+- Смена собственного отображаемого имени и пароля (`PATCH /me`, `PATCH /me/password`).
 - Административный CRUD пользователей: список с фильтрами и пагинацией,
   просмотр, изменение роли/статуса/имени, удаление.
 - Защита от потери доступа: нельзя удалить или понизить последнего активного
@@ -140,6 +140,7 @@ go run ./cmd/api
 | `POST` | `/api/v1/auth/refresh` | публично | Обновление пары токенов |
 | `POST` | `/api/v1/auth/logout` | публично | Отзыв семейства refresh-токенов |
 | `GET` | `/api/v1/me` | Bearer | Текущий пользователь |
+| `PATCH` | `/api/v1/me` | Bearer | Смена собственного `display_name` |
 | `PATCH` | `/api/v1/me/password` | Bearer | Смена пароля |
 
 Регистрация:
@@ -183,11 +184,21 @@ curl -X POST http://localhost:8080/api/v1/auth/logout \
 curl http://localhost:8080/api/v1/me \
   -H "Authorization: Bearer $ACCESS_TOKEN"
 
+curl -X PATCH http://localhost:8080/api/v1/me \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"display_name":"Новое имя"}'
+
 curl -X PATCH http://localhost:8080/api/v1/me/password \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"current_password":"super-secret-1","new_password":"even-better-secret-2"}'
 ```
+
+`PATCH /api/v1/me` принимает только `display_name` (1–100 символов после
+обрезки пробелов). Email, роль и статус пользователь изменить не может —
+неизвестные поля отклоняются с `400 invalid_json`; для этого используйте
+административные маршруты.
 
 После смены пароля все refresh-токены пользователя отзываются — потребуется
 войти заново.
