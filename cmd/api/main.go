@@ -14,6 +14,7 @@ import (
 	"habitat/internal/config"
 	"habitat/internal/httpapi"
 	"habitat/internal/storage/postgres"
+	"habitat/internal/users"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -64,6 +65,7 @@ func main() {
 	tm := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL)
 	hasher := auth.BcryptHasher{Cost: cfg.BcryptCost}
 	authSvc := auth.NewService(store, hasher, tm, cfg.RefreshTokenTTL)
+	userSvc := users.NewService(store)
 
 	mux := http.NewServeMux()
 
@@ -94,12 +96,14 @@ func main() {
 	mux.Handle("GET /api/v1/me", authMW(httpapi.MeHandler(store)))
 	mux.Handle("PATCH /api/v1/me/password", authMW(httpapi.ChangePasswordHandler(authSvc))) // <-- ДОБАВИТЬ
 
-	// Пример admin-only маршрута
-	mux.Handle("GET /api/v1/admin/users", authMW(httpapi.RequireRole("admin")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `{"message":"Admin area"}`)
-	}))))
+	// 3.1. Административное управление пользователями
+	adminOnly := func(h http.Handler) http.Handler {
+		return authMW(httpapi.RequireRole("admin")(h))
+	}
+	mux.Handle("GET /api/v1/admin/users", adminOnly(httpapi.ListUsersHandler(userSvc)))
+	mux.Handle("GET /api/v1/admin/users/{id}", adminOnly(httpapi.GetUserHandler(userSvc)))
+	mux.Handle("PATCH /api/v1/admin/users/{id}", adminOnly(httpapi.UpdateUserHandler(userSvc)))
+	mux.Handle("DELETE /api/v1/admin/users/{id}", adminOnly(httpapi.DeleteUserHandler(userSvc)))
 
 	// 4. Catch-all для корня (строго "GET /", чтобы не перехватывать /api/v1/... в Go 1.22+)
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {

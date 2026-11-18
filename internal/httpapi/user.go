@@ -30,14 +30,7 @@ func MeHandler(store UserStorage) http.HandlerFunc {
 		}
 
 		// Возвращаем DTO без password_hash
-		writeJSON(w, http.StatusOK, map[string]any{
-			"id":           u.ID,
-			"email":        u.Email,
-			"display_name": u.DisplayName,
-			"role":         u.Role,
-			"status":       u.Status,
-			"created_at":   u.CreatedAt,
-		})
+		writeJSON(w, http.StatusOK, newUserDTO(u))
 	}
 }
 

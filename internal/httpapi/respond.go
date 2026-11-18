@@ -30,6 +30,8 @@ func mapDomainError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 	case errors.Is(err, domain.ErrEmailTaken):
 		writeError(w, http.StatusConflict, "email_taken", "Этот email уже зарегистрирован")
+	case errors.Is(err, domain.ErrLastAdmin):
+		writeError(w, http.StatusConflict, "last_admin", "Нельзя удалить или понизить последнего активного администратора")
 	case errors.Is(err, domain.ErrInvalidCredentials),
 		errors.Is(err, domain.ErrInvalidRefresh),
 		errors.Is(err, domain.ErrRefreshReused),

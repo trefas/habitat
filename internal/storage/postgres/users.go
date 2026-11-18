@@ -3,13 +3,24 @@ package postgres
 import (
 	"context"
 	"errors"
-	"strings" // <-- Добавили этот импорт
+	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"habitat/internal/domain"
 )
+
+// userColumns — единый список колонок для чтения пользователя.
+const userColumns = `id::text, email, password_hash, display_name, role, status,
+	created_at, updated_at, last_login_at`
+
+// scanUser читает пользователя из строки результата.
+func scanUser(row pgx.Row, u *domain.User) error {
+	return row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role,
+		&u.Status, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt)
+}
 
 // CreateUser создает нового пользователя. Возвращает domain.ErrEmailTaken, если email уже занят.
 func (s *Storage) CreateUser(ctx context.Context, u *domain.User) error {
@@ -19,10 +30,9 @@ func (s *Storage) CreateUser(ctx context.Context, u *domain.User) error {
 	const q = `
 		INSERT INTO users (email, password_hash, display_name)
 		VALUES ($1, $2, $3)
-		RETURNING id::text, role, status, created_at, updated_at`
+		RETURNING ` + userColumns
 
-	err := s.pool.QueryRow(ctx, q, email, u.PasswordHash, u.DisplayName).
-		Scan(&u.ID, &u.Role, &u.Status, &u.CreatedAt, &u.UpdatedAt)
+	err := scanUser(s.pool.QueryRow(ctx, q, email, u.PasswordHash, u.DisplayName), u)
 
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
@@ -37,18 +47,15 @@ func (s *Storage) UserByEmail(ctx context.Context, email string) (*domain.User, 
 	email = strings.ToLower(email)
 
 	const q = `
-		SELECT id::text, email, password_hash, display_name, role, status, created_at, updated_at
+		SELECT ` + userColumns + `
 		FROM users 
 		WHERE email = $1`
 
 	var u domain.User
-	err := s.pool.QueryRow(ctx, q, email).Scan(
-		&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Status, &u.CreatedAt, &u.UpdatedAt)
-
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, domain.ErrNotFound
-	}
-	if err != nil {
+	if err := scanUser(s.pool.QueryRow(ctx, q, email), &u); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
 		return nil, err
 	}
 	return &u, nil
@@ -57,21 +64,114 @@ func (s *Storage) UserByEmail(ctx context.Context, email string) (*domain.User, 
 // UserByID ищет пользователя по UUID.
 func (s *Storage) UserByID(ctx context.Context, id string) (*domain.User, error) {
 	const q = `
-		SELECT id::text, email, password_hash, display_name, role, status, created_at, updated_at
+		SELECT ` + userColumns + `
 		FROM users 
 		WHERE id = $1::uuid`
 
 	var u domain.User
-	err := s.pool.QueryRow(ctx, q, id).Scan(
-		&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Status, &u.CreatedAt, &u.UpdatedAt)
-
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, domain.ErrNotFound
-	}
-	if err != nil {
+	if err := scanUser(s.pool.QueryRow(ctx, q, id), &u); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
 		return nil, err
 	}
 	return &u, nil
+}
+
+// ListUsers возвращает страницу пользователей и общее количество подходящих записей.
+func (s *Storage) ListUsers(ctx context.Context, f domain.UserFilter) ([]domain.User, int, error) {
+	const where = `
+		WHERE ($1 = '' OR email ILIKE '%' || $1 || '%' OR display_name ILIKE '%' || $1 || '%')
+		  AND ($2 = '' OR role = $2)
+		  AND ($3 = '' OR status = $3)`
+
+	var total int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*)::int FROM users`+where,
+		f.Search, f.Role, f.Status).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	const q = `
+		SELECT ` + userColumns + `
+		FROM users` + where + `
+		ORDER BY created_at DESC, id
+		LIMIT $4 OFFSET $5`
+
+	rows, err := s.pool.Query(ctx, q, f.Search, f.Role, f.Status, f.Limit, f.Offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	users := make([]domain.User, 0, f.Limit)
+	for rows.Next() {
+		var u domain.User
+		if err := scanUser(rows, &u); err != nil {
+			return nil, 0, err
+		}
+		users = append(users, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return users, total, nil
+}
+
+// UpdateUser применяет частичное обновление и возвращает актуальную запись.
+func (s *Storage) UpdateUser(ctx context.Context, id string, p domain.UserPatch) (*domain.User, error) {
+	sets := make([]string, 0, 3)
+	args := make([]any, 0, 4)
+	arg := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
+	}
+
+	if p.DisplayName != nil {
+		sets = append(sets, "display_name = "+arg(*p.DisplayName))
+	}
+	if p.Role != nil {
+		sets = append(sets, "role = "+arg(*p.Role))
+	}
+	if p.Status != nil {
+		sets = append(sets, "status = "+arg(*p.Status))
+	}
+	if len(sets) == 0 {
+		return s.UserByID(ctx, id)
+	}
+
+	// updated_at всё равно перезапишет триггер users_set_updated_at.
+	q := fmt.Sprintf(`UPDATE users SET %s WHERE id = %s::uuid RETURNING %s`,
+		strings.Join(sets, ", "), arg(id), userColumns)
+
+	var u domain.User
+	if err := scanUser(s.pool.QueryRow(ctx, q, args...), &u); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+	return &u, nil
+}
+
+// DeleteUser удаляет пользователя. Refresh-токены удаляются каскадно.
+func (s *Storage) DeleteUser(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM users WHERE id = $1::uuid`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+// CountActiveAdmins возвращает количество активных администраторов.
+// Используется, чтобы не оставить систему без администратора.
+func (s *Storage) CountActiveAdmins(ctx context.Context) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*)::int FROM users WHERE role = 'admin' AND status = 'active'`).Scan(&n)
+	return n, err
 }
 
 // TouchLastLogin обновляет время последнего входа.
