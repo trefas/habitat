@@ -51,6 +51,10 @@ func (f *fakeStorage) UserByID(_ context.Context, id string) (*domain.User, erro
 	return &u, nil
 }
 
+func (f *fakeStorage) AdminUserByID(_ context.Context, id string) (*domain.User, error) {
+	return f.UserByID(context.Background(), id)
+}
+
 func (f *fakeStorage) UpdateUser(_ context.Context, id string, p domain.UserPatch) (*domain.User, error) {
 	u, ok := f.users[id]
 	if !ok {

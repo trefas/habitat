@@ -39,6 +39,8 @@ func mapDomainError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "Неверные учетные данные или токен")
 	case errors.Is(err, domain.ErrUserBlocked):
 		writeError(w, http.StatusForbidden, "user_blocked", "Аккаунт заблокирован или не активирован")
+	case errors.Is(err, domain.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "Недостаточно прав для выполнения этого действия")
 	case errors.Is(err, domain.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "Ресурс не найден")
 	default:

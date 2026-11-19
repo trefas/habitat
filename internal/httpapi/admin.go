@@ -33,6 +33,7 @@ type userDTO struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 	LastLoginAt *time.Time `json:"last_login_at"`
+	DeletedAt   *time.Time `json:"deleted_at"`
 }
 
 func newUserDTO(u *domain.User) userDTO {
@@ -45,6 +46,7 @@ func newUserDTO(u *domain.User) userDTO {
 		CreatedAt:   u.CreatedAt,
 		UpdatedAt:   u.UpdatedAt,
 		LastLoginAt: u.LastLoginAt,
+		DeletedAt:   u.DeletedAt,
 	}
 }
 

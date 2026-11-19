@@ -25,6 +25,7 @@ type User struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	LastLoginAt  *time.Time
+	DeletedAt    *time.Time
 }
 
 // UserFilter описывает параметры выборки пользователей для администратора.
@@ -65,6 +66,7 @@ var (
 	ErrUserBlocked        = errors.New("user is not active")
 	ErrRefreshExpired     = errors.New("refresh token expired")
 	ErrLastAdmin          = errors.New("cannot remove the last active admin")
+	ErrForbidden          = errors.New("forbidden")
 )
 
 // ValidRole сообщает, допустима ли роль пользователя.

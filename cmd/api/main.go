@@ -13,6 +13,8 @@ import (
 	"habitat/internal/auth"
 	"habitat/internal/config"
 	"habitat/internal/httpapi"
+	"habitat/internal/messaging"
+	"habitat/internal/notifications"
 	"habitat/internal/storage/postgres"
 	"habitat/internal/users"
 
@@ -66,6 +68,8 @@ func main() {
 	hasher := auth.BcryptHasher{Cost: cfg.BcryptCost}
 	authSvc := auth.NewService(store, hasher, tm, cfg.RefreshTokenTTL)
 	userSvc := users.NewService(store)
+	messageSvc := messaging.NewService(store)
+	notificationSvc := notifications.NewService(store)
 
 	mux := http.NewServeMux()
 
@@ -97,7 +101,20 @@ func main() {
 	mux.Handle("PATCH /api/v1/me", authMW(httpapi.UpdateMeHandler(userSvc)))
 	mux.Handle("PATCH /api/v1/me/password", authMW(httpapi.ChangePasswordHandler(authSvc)))
 
-	// 3.1. Административное управление пользователями
+	// 3.1. Сообщения
+	mux.Handle("POST /api/v1/messages", authMW(httpapi.CreateMessageHandler(messageSvc)))
+	mux.Handle("GET /api/v1/messages", authMW(httpapi.ListMessagesHandler(messageSvc)))
+	mux.Handle("GET /api/v1/messages/{id}", authMW(httpapi.GetMessageHandler(messageSvc)))
+	mux.Handle("POST /api/v1/messages/{id}/read", authMW(httpapi.MarkMessageReadHandler(messageSvc)))
+	mux.Handle("GET /api/v1/messages/{id}/receipts", authMW(httpapi.ListMessageReceiptsHandler(messageSvc)))
+	mux.Handle("POST /api/v1/messages/{id}/shares", authMW(httpapi.ShareMessageHandler(messageSvc)))
+	mux.Handle("DELETE /api/v1/messages/{id}/shares/{granteeID}", authMW(httpapi.RevokeMessageShareHandler(messageSvc)))
+
+	// 3.2. Входящие уведомления
+	mux.Handle("GET /api/v1/notifications", authMW(httpapi.ListNotificationsHandler(notificationSvc)))
+	mux.Handle("POST /api/v1/notifications/{id}/read", authMW(httpapi.MarkNotificationReadHandler(notificationSvc)))
+
+	// 3.3. Административное управление пользователями
 	adminOnly := func(h http.Handler) http.Handler {
 		return authMW(httpapi.RequireRole("admin")(h))
 	}

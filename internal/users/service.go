@@ -24,6 +24,7 @@ const (
 type Storage interface {
 	ListUsers(ctx context.Context, f domain.UserFilter) ([]domain.User, int, error)
 	UserByID(ctx context.Context, id string) (*domain.User, error)
+	AdminUserByID(ctx context.Context, id string) (*domain.User, error)
 	UpdateUser(ctx context.Context, id string, p domain.UserPatch) (*domain.User, error)
 	DeleteUser(ctx context.Context, id string) error
 	RevokeAllUserRefreshTokens(ctx context.Context, userID string) error
@@ -71,7 +72,7 @@ func (s *Service) GetUser(ctx context.Context, id string) (*domain.User, error) 
 	if !domain.IsUUID(id) {
 		return nil, fmt.Errorf("%w: некорректный идентификатор пользователя", domain.ErrValidation)
 	}
-	return s.store.UserByID(ctx, id)
+	return s.store.AdminUserByID(ctx, id)
 }
 
 // UpdateProfile изменяет собственный профиль пользователя.
@@ -116,9 +117,12 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, targetID string, p do
 		return nil, fmt.Errorf("%w: нельзя менять собственную роль или статус", domain.ErrValidation)
 	}
 
-	current, err := s.store.UserByID(ctx, targetID)
+	current, err := s.store.AdminUserByID(ctx, targetID)
 	if err != nil {
 		return nil, err
+	}
+	if current.DeletedAt != nil {
+		return nil, fmt.Errorf("%w: пользователь удалён", domain.ErrValidation)
 	}
 
 	// Не позволяем оставить систему без активного администратора.
@@ -164,9 +168,12 @@ func (s *Service) DeleteUser(ctx context.Context, actorID, targetID string) erro
 		return fmt.Errorf("%w: нельзя удалить собственную учётную запись", domain.ErrValidation)
 	}
 
-	target, err := s.store.UserByID(ctx, targetID)
+	target, err := s.store.AdminUserByID(ctx, targetID)
 	if err != nil {
 		return err
+	}
+	if target.DeletedAt != nil {
+		return domain.ErrNotFound
 	}
 
 	if target.Role == domain.RoleAdmin && target.Status == domain.StatusActive {

@@ -14,12 +14,12 @@ import (
 
 // userColumns — единый список колонок для чтения пользователя.
 const userColumns = `id::text, email, password_hash, display_name, role, status,
-	created_at, updated_at, last_login_at`
+	created_at, updated_at, last_login_at, deleted_at`
 
 // scanUser читает пользователя из строки результата.
 func scanUser(row pgx.Row, u *domain.User) error {
 	return row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role,
-		&u.Status, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt)
+		&u.Status, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt, &u.DeletedAt)
 }
 
 // CreateUser создает нового пользователя. Возвращает domain.ErrEmailTaken, если email уже занят.
@@ -49,7 +49,7 @@ func (s *Storage) UserByEmail(ctx context.Context, email string) (*domain.User, 
 	const q = `
 		SELECT ` + userColumns + `
 		FROM users 
-		WHERE email = $1`
+		WHERE email = $1 AND deleted_at IS NULL`
 
 	var u domain.User
 	if err := scanUser(s.pool.QueryRow(ctx, q, email), &u); err != nil {
@@ -61,8 +61,26 @@ func (s *Storage) UserByEmail(ctx context.Context, email string) (*domain.User, 
 	return &u, nil
 }
 
-// UserByID ищет пользователя по UUID.
+// UserByID ищет неудалённого пользователя по UUID.
 func (s *Storage) UserByID(ctx context.Context, id string) (*domain.User, error) {
+	const q = `
+		SELECT ` + userColumns + `
+		FROM users 
+		WHERE id = $1::uuid AND deleted_at IS NULL`
+
+	var u domain.User
+	if err := scanUser(s.pool.QueryRow(ctx, q, id), &u); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+	return &u, nil
+}
+
+// AdminUserByID ищет пользователя по UUID, включая мягко удалённых.
+// Используется административным CRUD.
+func (s *Storage) AdminUserByID(ctx context.Context, id string) (*domain.User, error) {
 	const q = `
 		SELECT ` + userColumns + `
 		FROM users 
@@ -153,16 +171,32 @@ func (s *Storage) UpdateUser(ctx context.Context, id string, p domain.UserPatch)
 	return &u, nil
 }
 
-// DeleteUser удаляет пользователя. Refresh-токены удаляются каскадно.
+// DeleteUser выполняет мягкое удаление пользователя и отзывает все его сессии.
+// Запись остаётся в БД, чтобы сохранить владение сущностями и аудит.
 func (s *Storage) DeleteUser(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM users WHERE id = $1::uuid`, id)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx,
+		`UPDATE users SET deleted_at = now(), status = 'blocked'
+		 WHERE id = $1::uuid AND deleted_at IS NULL`, id)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return domain.ErrNotFound
 	}
-	return nil
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE refresh_tokens SET revoked_at = now()
+		 WHERE user_id = $1::uuid AND revoked_at IS NULL`, id); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 // CountActiveAdmins возвращает количество активных администраторов.
